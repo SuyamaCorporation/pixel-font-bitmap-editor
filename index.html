@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ピクセルフォント ビットマップ エディター</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  #pixelGrid { cursor: crosshair; image-rendering: pixelated; }
+  .char-btn { font-family: monospace; }
+  .char-btn.active { background: #2563eb; color: white; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-2xl font-bold mb-4 text-gray-800">ピクセルフォント ビットマップ エディター</h1>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <!-- Editor Panel -->
+    <div class="lg:col-span-1 bg-white rounded-lg shadow p-4">
+      <div class="flex justify-between items-center mb-3">
+        <h2 class="text-lg font-semibold text-gray-700">エディター</h2>
+        <div class="flex gap-2 items-center">
+          <label for="gridSize" class="text-sm text-gray-600">サイズ:</label>
+          <select id="gridSize" class="border rounded px-2 py-1 text-sm" onchange="changeGridSize()" aria-label="グリッドサイズ">
+            <option value="8">8×8</option>
+            <option value="16">16×16</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex justify-center mb-3">
+        <canvas id="pixelGrid" class="border-2 border-gray-400"></canvas>
+      </div>
+
+      <!-- Controls -->
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <button onclick="clearGrid()" class="bg-gray-200 text-gray-700 rounded px-3 py-1 text-sm hover:bg-gray-300" aria-label="クリア">クリア</button>
+        <button onclick="invertGrid()" class="bg-gray-200 text-gray-700 rounded px-3 py-1 text-sm hover:bg-gray-300" aria-label="反転">反転</button>
+        <button onclick="shiftGrid('up')" class="bg-gray-200 text-gray-700 rounded px-3 py-1 text-sm hover:bg-gray-300" aria-label="上シフト">↑ 上</button>
+        <button onclick="shiftGrid('down')" class="bg-gray-200 text-gray-700 rounded px-3 py-1 text-sm hover:bg-gray-300" aria-label="下シフト">↓ 下</button>
+        <button onclick="shiftGrid('left')" class="bg-gray-200 text-gray-700 rounded px-3 py-1 text-sm hover:bg-gray-300" aria-label="左シフト">← 左</button>
+        <button onclick="shiftGrid('right')" class="bg-gray-200 text-gray-700 rounded px-3 py-1 text-sm hover:bg-gray-300" aria-label="右シフト">→ 右</button>
+      </div>
+
+      <div class="flex gap-2 mb-2">
+        <div class="w-4 h-4 rounded" id="fgColorBox" style="background:#000000;border:1px solid #888;"></div>
+        <label for="fgColor" class="text-sm text-gray-600">前景色:</label>
+        <input id="fgColor" type="color" value="#000000" class="w-8 h-6 border-0 cursor-pointer" onchange="updateColors()" aria-label="前景色">
+        <div class="w-4 h-4 rounded ml-2" id="bgColorBox" style="background:#ffffff;border:1px solid #888;"></div>
+        <label for="bgColor" class="text-sm text-gray-600">背景色:</label>
+        <input id="bgColor" type="color" value="#ffffff" class="w-8 h-6 border-0 cursor-pointer" onchange="updateColors()" aria-label="背景色">
+      </div>
+
+      <button onclick="saveChar()" class="w-full bg-blue-600 text-white rounded px-3 py-2 text-sm hover:bg-blue-700 mt-2" aria-label="文字を保存">現在の文字を保存</button>
+    </div>
+
+    <!-- Character Set -->
+    <div class="lg:col-span-1 bg-white rounded-lg shadow p-4">
+      <h2 class="text-lg font-semibold mb-3 text-gray-700">文字セット</h2>
+      <div id="charSet" class="flex flex-wrap gap-1 mb-3 max-h-64 overflow-y-auto"></div>
+      <div class="text-xs text-gray-500">クリックで文字を選択・編集</div>
+      <div class="mt-2 text-sm">
+        <span class="text-gray-600">編集中: </span>
+        <span id="currentCharLabel" class="font-bold text-blue-700">A</span>
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div class="lg:col-span-1 bg-white rounded-lg shadow p-4">
+      <h2 class="text-lg font-semibold mb-3 text-gray-700">テキストプレビュー</h2>
+      <label for="previewText" class="block text-sm text-gray-600 mb-1">プレビューテキスト:</label>
+      <input id="previewText" type="text" value="HELLO" maxlength="20" class="w-full border rounded px-2 py-1 text-sm mb-3" oninput="renderPreview()" aria-label="プレビューテキスト">
+      <div class="bg-gray-900 rounded p-2">
+        <canvas id="previewCanvas"></canvas>
+      </div>
+      <div class="text-xs text-gray-500 mt-2">保存済み文字のみ表示されます</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+let gridSize = 8;
+let pixelSize = 32;
+let grid = [];
+let currentChar = 'A';
+let isDrawing = false;
+let drawMode = true;
+let fontData = {};
+let fgColor = '#000000';
+let bgColor = '#ffffff';
+
+const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?.,@#$%+-=_/\\|()[]<>^~';
+
+function initGrid() {
+  grid = Array.from({length: gridSize}, () => Array(gridSize).fill(0));
+}
+
+function loadChar(ch) {
+  const key = `${gridSize}x${gridSize}:${ch}`;
+  if (fontData[key]) {
+    grid = fontData[key].map(row => [...row]);
+  } else {
+    initGrid();
+  }
+}
+
+function saveChar() {
+  const key = `${gridSize}x${gridSize}:${currentChar}`;
+  fontData[key] = grid.map(row => [...row]);
+  localStorage.setItem('pixel-font-data', JSON.stringify(fontData));
+  drawGrid();
+  renderPreview();
+}
+
+function changeGridSize() {
+  gridSize = parseInt(document.getElementById('gridSize').value);
+  pixelSize = gridSize === 8 ? 32 : 16;
+  loadChar(currentChar);
+  setupCanvas();
+  drawGrid();
+}
+
+function setupCanvas() {
+  const canvas = document.getElementById('pixelGrid');
+  canvas.width = gridSize * pixelSize;
+  canvas.height = gridSize * pixelSize;
+}
+
+function drawGrid() {
+  const canvas = document.getElementById('pixelGrid');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let r = 0; r < gridSize; r++) {
+    for (let c = 0; c < gridSize; c++) {
+      ctx.fillStyle = grid[r][c] ? fgColor : bgColor;
+      ctx.fillRect(c * pixelSize, r * pixelSize, pixelSize, pixelSize);
+      // Grid lines
+      ctx.strokeStyle = '#d1d5db';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(c * pixelSize, r * pixelSize, pixelSize, pixelSize);
+    }
+  }
+}
+
+function getPixelPos(e) {
+  const canvas = document.getElementById('pixelGrid');
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    c: Math.floor(x * scaleX / pixelSize),
+    r: Math.floor(y * scaleY / pixelSize)
+  };
+}
+
+function togglePixel(r, c) {
+  if (r < 0 || r >= gridSize || c < 0 || c >= gridSize) return;
+  if (isDrawing) {
+    grid[r][c] = drawMode ? 1 : 0;
+  } else {
+    grid[r][c] = grid[r][c] ? 0 : 1;
+    drawMode = grid[r][c] === 1;
+    isDrawing = true;
+  }
+  drawGrid();
+}
+
+document.getElementById('pixelGrid').addEventListener('mousedown', e => {
+  isDrawing = false;
+  const {r, c} = getPixelPos(e);
+  if (r >= 0 && r < gridSize && c >= 0 && c < gridSize) {
+    drawMode = grid[r][c] === 0;
+  }
+  isDrawing = true;
+  togglePixel(r, c);
+  e.preventDefault();
+});
+document.getElementById('pixelGrid').addEventListener('mousemove', e => {
+  if (!isDrawing) return;
+  if (!(e.buttons & 1)) { isDrawing = false; return; }
+  const {r, c} = getPixelPos(e);
+  if (grid[r] !== undefined && grid[r][c] !== undefined) {
+    grid[r][c] = drawMode ? 1 : 0;
+    drawGrid();
+  }
+});
+document.addEventListener('mouseup', () => { isDrawing = false; });
+
+function clearGrid() { initGrid(); drawGrid(); }
+function invertGrid() { grid = grid.map(row => row.map(v => v ? 0 : 1)); drawGrid(); }
+function shiftGrid(dir) {
+  const newG = Array.from({length: gridSize}, () => Array(gridSize).fill(0));
+  for (let r = 0; r < gridSize; r++) {
+    for (let c = 0; c < gridSize; c++) {
+      let nr = r, nc = c;
+      if (dir === 'up') nr = (r - 1 + gridSize) % gridSize;
+      if (dir === 'down') nr = (r + 1) % gridSize;
+      if (dir === 'left') nc = (c - 1 + gridSize) % gridSize;
+      if (dir === 'right') nc = (c + 1) % gridSize;
+      newG[nr][nc] = grid[r][c];
+    }
+  }
+  grid = newG;
+  drawGrid();
+}
+
+function updateColors() {
+  fgColor = document.getElementById('fgColor').value;
+  bgColor = document.getElementById('bgColor').value;
+  document.getElementById('fgColorBox').style.background = fgColor;
+  document.getElementById('bgColorBox').style.background = bgColor;
+  drawGrid();
+}
+
+function renderCharSet() {
+  const container = document.getElementById('charSet');
+  container.innerHTML = '';
+  CHARS.split('').forEach(ch => {
+    const btn = document.createElement('button');
+    btn.className = 'char-btn w-8 h-8 text-xs border rounded hover:bg-blue-100' + (ch === currentChar ? ' active' : '');
+    btn.textContent = ch;
+    btn.setAttribute('aria-label', `文字 ${ch}`);
+    const key = `${gridSize}x${gridSize}:${ch}`;
+    if (fontData[key]) btn.style.background = btn.classList.contains('active') ? '#2563eb' : '#d1fae5';
+    btn.onclick = () => {
+      saveChar();
+      currentChar = ch;
+      loadChar(ch);
+      drawGrid();
+      document.getElementById('currentCharLabel').textContent = ch;
+      renderCharSet();
+    };
+    container.appendChild(btn);
+  });
+}
+
+function renderPreview() {
+  const text = document.getElementById('previewText').value.toUpperCase();
+  const canvas = document.getElementById('previewCanvas');
+  const ps = 3;
+  canvas.width = text.length * (gridSize + 1) * ps;
+  canvas.height = gridSize * ps;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  text.split('').forEach((ch, ci) => {
+    const key = `${gridSize}x${gridSize}:${ch}`;
+    const data = fontData[key];
+    if (!data) return;
+    for (let r = 0; r < gridSize; r++) {
+      for (let c = 0; c < gridSize; c++) {
+        if (data[r][c]) {
+          ctx.fillStyle = '#22c55e';
+          ctx.fillRect(ci * (gridSize + 1) * ps + c * ps, r * ps, ps, ps);
+        }
+      }
+    }
+  });
+}
+
+// Init
+try { fontData = JSON.parse(localStorage.getItem('pixel-font-data') || '{}'); } catch(e) { fontData = {}; }
+initGrid();
+setupCanvas();
+loadChar(currentChar);
+drawGrid();
+renderCharSet();
+renderPreview();
+</script>
+</body>
+</html>
